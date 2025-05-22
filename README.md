@@ -2,7 +2,7 @@
 
 An interactive web-based GUI for building and testing deep learning models. This tool allows users to:
 
-- Import and use pre-defined neural network blocks (Transformers, Encoders/Decoders, Conv layers, etc.)
+- Import and use pre-defined neural network / operations blocks (Transformers, Encoders/Decoders, Conv layers, etc.)
 - Build custom models through an intuitive drag-and-drop interface
 - Test models with small datasets for quick validation
 - Train models for a few epochs to verify functionality

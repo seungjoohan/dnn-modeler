@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState, useMemo } from 'react';
 import { Box, Typography, Grid, Button, TextField, Drawer } from '@mui/material';
 import GraphModelStructure from './components/ModelStructure/GraphModelStructure';
 import CustomBlockNode from './components/ModelStructure/CustomBlockNode';
@@ -18,31 +18,24 @@ import {
 } from 'reactflow';
 import type { Block } from './types';
 import CustomEdge from './components/ModelStructure/CustomEdge';
+import WarningIcon from '@mui/icons-material/Warning';
 
 const initialNodes: Node[] = [
   {
     id: 'input',
     type: 'input',
-    data: { label: 'Input Layer', parameters: { shape: '' }, shapePlaceholder: 'e.g. 784 or (384,384,1)' },
+    data: { label: 'Input Layer', parameters: { shape: '' }, shapePlaceholder: 'e.g. 784, (3,384,384), or (50, 512)' },
     position: { x: 250, y: 0 },
   },
   {
     id: 'output',
     type: 'output',
-    data: { label: 'Output Layer', parameters: { shape: '' } },
+    data: { label: 'Output Layer', parameters: { } },
     position: { x: 250, y: 400 },
   },
 ];
 
 const initialEdges: Edge[] = [];
-
-const nodeTypes: NodeTypes = {
-  customBlock: CustomBlockNode,
-};
-
-const edgeTypes: EdgeTypes = {
-  custom: CustomEdge,
-};
 
 const App: React.FC = () => {
   const [nodes, setNodes] = React.useState<Node[]>(initialNodes);
@@ -52,6 +45,17 @@ const App: React.FC = () => {
   const [errorBlocks, setErrorBlocks] = useState<string | null>(null);
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
   const [isDrawerOpen, setDrawerOpen] = useState(false);
+  const [compatibilityMap, setCompatibilityMap] = useState<Record<string, any>>({});
+
+  // nodeTypes, edgeTypes를 useMemo로 감싸서 선언
+  const nodeTypes: NodeTypes = useMemo(() => ({
+    input: (props) => <CustomBlockNode {...props} />,
+    output: (props) => <CustomBlockNode {...props} />,
+    customBlock: (props) => <CustomBlockNode {...props} />,
+  }), []);
+  const edgeTypes: EdgeTypes = useMemo(() => ({
+    custom: CustomEdge,
+  }), []);
 
   // 최초 렌더 시 백엔드에서 블록 목록 fetch
   useEffect(() => {
@@ -71,6 +75,54 @@ const App: React.FC = () => {
       });
   }, []);
 
+  // 파라미터 값 타입 변환 함수 추가
+  function parseParamValue(key: string, value: any) {
+    if (typeof value === 'string') {
+      // 숫자
+      if (/^-?\d+$/.test(value)) return Number(value);
+      // 튜플/리스트 (예: "(1, 2, 3)")
+      if (/^\(.*\)$/.test(value)) {
+        try {
+          return JSON.parse(value.replace(/\((.*)\)/, '[$1]'));
+        } catch {
+          return value;
+        }
+      }
+    }
+    return value;
+  }
+
+  // getNodeWithDefaults를 최상단에 정의
+  const getNodeWithDefaults = (node: Node | undefined) => {
+    if (!node) return undefined;
+    if (node.id === 'input' || node.id === 'output') {
+      // input/output도 변환 적용
+      const paramObj: Record<string, any> = {};
+      Object.entries(node.data.parameters).forEach(([k, v]) => {
+        paramObj[k] = parseParamValue(k, v);
+      });
+      return {
+        id: node.id,
+        type: node.type,
+        name: node.data.label,
+        parameters: paramObj,
+      };
+    }
+    const block = availableBlocks.find(b => b.type === node.data.blockType);
+    const paramDefs = block?.parameters || {};
+    const params: Record<string, any> = { ...node.data.parameters };
+    Object.entries(paramDefs).forEach(([k, v]: [string, any]) => {
+      if (!params[k] || params[k] === '') params[k] = v.default ?? '';
+      params[k] = parseParamValue(k, params[k]);
+    });
+    return {
+      id: node.id,
+      type: node.data.blockType,
+      name: block?.name || node.data.label,
+      parameters: params,
+    };
+  };
+
   // 블록 클릭 시 노드 추가
   const handleAddBlockNode = useCallback((block: Block) => {
     // block.parameters가 객체면 default 값으로 초기화
@@ -82,7 +134,7 @@ const App: React.FC = () => {
     } else if (Array.isArray(block.parameters)) {
       paramObj = Object.fromEntries(block.parameters.map((k: string) => [k, '']));
     } else {
-      paramObj = { ...block.parameters };
+      paramObj = typeof block.parameters === "object" && block.parameters !== null ? { ...block.parameters } : {};
     }
 
     setNodes((nds) => {
@@ -110,28 +162,60 @@ const App: React.FC = () => {
     setEdges((eds) => eds.filter(e => e.id !== edgeId));
   }, []);
 
+  // edgesWithType 생성 시 compatibilityMap 반영
+  const edgesWithType = edges.map(edge => {
+    const compatKey = `${edge.source}->${edge.target}`;
+    const compat = compatibilityMap[compatKey] || {};
+    return {
+      ...edge,
+      type: 'custom',
+      data: {
+        ...edge.data,
+        edgeId: edge.id,
+        onDeleteEdge: handleDeleteEdge,
+        incompatible: compat.compatible === false,
+        error: compat.error || undefined,
+      },
+    };
+  });
 
-  const edgesWithType = edges.map(edge => ({
-    ...edge,
-    type: 'custom',
-    data: {
-      ...edge.data,
-      edgeId: edge.id,
-      onDeleteEdge: handleDeleteEdge,
-    },
-  }));
-
-  // 노드에 핸들러 주입
-  const nodesWithHandlers = nodes.map(node =>
-    node.type === 'customBlock'
-      ? {
-          ...node,
-          data: {
-            ...node.data,
-            onDelete: () => handleDeleteNode(node.id),
-          },
-        }
-      : { ...node } // input/output도 항상 최신 nodes의 data 사용
+  // nodesWithHandlers: compatibilityMap만 사용해서 output_shape, error 표시
+  const nodesWithHandlers = useMemo(
+    () =>
+      nodes.map(node => {
+        // compatible한 엣지의 output_shape, error를 target 노드에 표시
+        let outputShape = undefined;
+        let error = undefined;
+        Object.entries(compatibilityMap).forEach(([key, value]) => {
+          const [src, tgt] = key.split('->');
+          if (tgt === node.id && value.compatible && value.output_shape) {
+            outputShape = value.output_shape;
+          }
+          if (tgt === node.id && value.error) {
+            error = value.error;
+          }
+        });
+        return node.type === 'customBlock'
+          ? {
+              ...node,
+              data: {
+                ...node.data,
+                type: node.type,
+                output_shape: outputShape,
+                error: error,
+                onDelete: () => handleDeleteNode(node.id),
+              },
+            }
+          : {
+              ...node,
+              data: {
+                ...node.data,
+                output_shape: outputShape,
+                error: error,
+              },
+            };
+      }),
+    [nodes, compatibilityMap, handleDeleteNode]
   );
 
   const onNodesChange: OnNodesChange = useCallback(
@@ -144,10 +228,18 @@ const App: React.FC = () => {
   );
 
   const onConnect = useCallback((connection: Connection) => {
-    setEdges((eds) => [...eds, { ...connection, id: `${connection.source}-${connection.target}` } as Edge]);
+    setEdges(eds => [
+      ...eds,
+      {
+        ...connection,
+        id: `${connection.source}-${connection.target}`,
+        type: 'custom',
+        data: {},
+      } as Edge
+    ]);
   }, []);
 
-  const onNodeClick = useCallback((event, node) => {
+  const onNodeClick = useCallback((event: React.MouseEvent, node: Node) => {
     setSelectedNode(node);
     setDrawerOpen(true);
   }, []);
@@ -197,48 +289,23 @@ const App: React.FC = () => {
   const handleBuildModel = async () => {
     // input/output layer 존재 및 shape 값 체크
     const inputNode = nodes.find(n => n.id === 'input');
-    const outputNode = nodes.find(n => n.id === 'output');
     if (
       !inputNode ||
-      !outputNode ||
-      !inputNode.data.parameters?.shape ||
-      !outputNode.data.parameters?.shape
+      !inputNode.data.parameters?.shape 
     ) {
-      alert('Define BOTH Input AND Output layer');
+      alert('Define Input layer');
       return;
     }
 
     // 파라미터 default 값 채우기
-    const getNodeWithDefaults = (node: Node | undefined) => {
-      if (!node) return undefined;
-      if (node.id === 'input' || node.id === 'output') {
-        return {
-          id: node.id,
-          type: node.type,
-          name: node.data.label,
-          parameters: node.data.parameters,
-        };
-      }
-      const block = availableBlocks.find(b => b.type === node.data.blockType);
-      const paramDefs = block?.parameters || {};
-      const params = { ...node.data.parameters };
-      Object.entries(paramDefs).forEach(([k, v]) => {
-        if (!params[k] || params[k] === '') params[k] = v.default ?? '';
-      });
-      return {
-        id: node.id,
-        type: node.data.blockType,
-        name: block?.name || node.data.label,
-        parameters: params,
-      };
-    };
+    const middleNodes = nodes.filter(n => n.id !== 'input');
 
-    const middleNodes = nodes.filter(n => n.id !== 'input' && n.id !== 'output');
+    const inputNodeObj = getNodeWithDefaults(inputNode);
+    const allNodes = [inputNodeObj, ...middleNodes.map(getNodeWithDefaults)];
 
     const payload = {
-      input: getNodeWithDefaults(inputNode),
-      output: getNodeWithDefaults(outputNode),
-      nodes: middleNodes.map(getNodeWithDefaults),
+      input: inputNodeObj,
+      nodes: allNodes,
       edges: edges.map(e => ({
         source: e.source,
         target: e.target,
@@ -262,11 +329,72 @@ const App: React.FC = () => {
     }
   };
 
+  // edge가 변경될 때만 check-compatibility 호출
+  useEffect(() => {
+    if (edges.length === 0) return;
+    // input/output/middle 노드를 getNodeWithDefaults로 변환
+    const inputNode = nodes.find(n => n.id === 'input');
+    const outputNode = nodes.find(n => n.id === 'output');
+    const middleNodes = nodes.filter(n => n.id !== 'input' && n.id !== 'output');
+    const inputNodeObj = getNodeWithDefaults(inputNode);
+    const outputNodeObj = getNodeWithDefaults(outputNode);
+    const allNodes = [inputNodeObj, ...middleNodes.map(getNodeWithDefaults), outputNodeObj];
+    fetch('http://localhost:8000/check-compatibility', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nodes: allNodes, edges }),
+    })
+      .then(res => res.json())
+      .then(compatMap => {
+        setCompatibilityMap(compatMap);
+      });
+  }, [edges, nodes]);
+
+  // input~output까지 연결된 path가 있는지 확인하는 함수
+  function hasInputToOutputPath(nodes, edges) {
+    const idSet = new Set(nodes.map(n => n.id));
+    const graph = {};
+    nodes.forEach(n => { graph[n.id] = []; });
+    edges.forEach(e => {
+      if (idSet.has(e.source) && idSet.has(e.target)) {
+        graph[e.source].push(e.target);
+      }
+    });
+    // BFS
+    const queue = ['input'];
+    const visited = new Set();
+    while (queue.length) {
+      const curr = queue.shift();
+      if (curr === 'output') return true;
+      visited.add(curr);
+      for (const next of graph[curr] || []) {
+        if (!visited.has(next)) queue.push(next);
+      }
+    }
+    return false;
+  }
+
+  const allCompatible = useMemo(() =>
+    Object.values(compatibilityMap).every(edge => edge.compatible),
+    [compatibilityMap]
+  );
+
+  const canBuildModel = useMemo(() => {
+    const inputNode = nodes.find(n => n.id === 'input');
+    const outputNode = nodes.find(n => n.id === 'output');
+    return (
+      !!inputNode &&
+      !!outputNode &&
+      hasInputToOutputPath(nodes, edges) &&
+      allCompatible
+    );
+  }, [nodes, edges, allCompatible]);
+
   return (
     <Box sx={{ flexGrow: 1, p: 0, m: 0, background: '#f5f6fa', minHeight: '100vh', width: '100vw' }}>
       <Box sx={{ display: 'flex', alignItems: 'center', pl: 4, pt: 4 }}>
         <Typography variant="h3" fontWeight={700} gutterBottom>DNN Modeler</Typography>
-        <Button variant="contained" color="primary" sx={{ ml: 2, height: 40 }} onClick={handleBuildModel}>BUILD!</Button>
+        <Button variant="contained" color="primary" sx={{ ml: 2, height: 40 }} onClick={handleBuildModel} disabled={!canBuildModel}>BUILD!</Button>
       </Box>
       <Grid container columns={12} columnSpacing={2} sx={{ height: '80vh', width: '100vw', margin: 0 }}>
         {/* 왼쪽: Available Blocks */}
@@ -287,9 +415,9 @@ const App: React.FC = () => {
               onNodesChange={onNodesChange}
               onEdgesChange={onEdgesChange}
               onConnect={onConnect}
+              onNodeClick={onNodeClick}
               nodeTypes={nodeTypes}
               edgeTypes={edgeTypes}
-              onNodeClick={onNodeClick}
             />
           </Box>
         </Box>
