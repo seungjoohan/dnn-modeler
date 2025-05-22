@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Dict, Any
+import inspect
 import torch
 import torch.nn as nn
 from .utils import parse_shape_string, sort_by_edges, propagate_shapes
@@ -34,49 +35,30 @@ async def root():
 @app.get("/available-blocks")
 async def get_available_blocks():
     """Return list of available neural network blocks"""
-    return {
-        "blocks": [
-            {
-                "name": "Conv2d",
-                "type": "convolution",
-                "parameters": {
-                    "in_channels": {"default": 1, "type": "int"},
-                    "out_channels": {"default": 1, "type": "int"},
-                    "kernel_size": {"default": 3, "type": "int"},
-                    "stride": {"default": 1, "type": "int"},
-                    "padding": {"default": 0, "type": "int"}
+    from datetime import datetime
+    print(f"get_available_blocks called at {datetime.now()}")
+    blocks = []
+    for name, cls in vars(nn).items():
+        if inspect.isclass(cls) and issubclass(cls, nn.Module) and cls is not nn.Module:
+            sig = inspect.signature(cls.__init__)
+            params = {}
+            for pname, param in sig.parameters.items():
+                if pname == 'self':
+                    continue
+                elif pname in ['device', 'dtype', 'bias']:
+                    continue
+                param_type = str(param.annotation) if param.annotation != inspect._empty else 'Any'
+                default = param.default if param.default != inspect._empty else None
+                params[pname] = {
+                    'default': default,
+                    'type': param_type
                 }
-            },
-            {
-                "name": "TransformerEncoder",
-                "type": "transformer",
-                "parameters": {
-                    "d_model": {"default": 32, "type": "int"},
-                    "nhead": {"default": 2, "type": "int"},
-                    "dim_feedforward": {"default": 64, "type": "int"},
-                    "num_layers": {"default": 1, "type": "int"}
-                }
-            },
-            {
-                "name": "TransformerDecoder",
-                "type": "transformer",
-                "parameters": {
-                    "d_model": {"default": 32, "type": "int"},
-                    "nhead": {"default": 2, "type": "int"},
-                    "dim_feedforward": {"default": 64, "type": "int"},
-                    "num_layers": {"default": 1, "type": "int"}
-                }
-            },
-            {
-                "name": "Linear",
-                "type": "linear",
-                "parameters": {
-                    "in_features": {"default": 128, "type": "int"},
-                    "out_features": {"default": 64, "type": "int"}
-                }
-            }
-        ]
-    }
+            blocks.append({
+                'name': name,
+                'type': name.lower(),
+                'parameters': params
+            })
+    return blocks
 
 @app.post("/test-model")
 async def test_model(config: TestConfig):

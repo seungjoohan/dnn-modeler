@@ -61,12 +61,9 @@ const App: React.FC = () => {
   useEffect(() => {
     setLoadingBlocks(true);
     fetch('http://localhost:8000/available-blocks')
-      .then(res => {
-        if (!res.ok) throw new Error('API Call Failed');
-        return res.json();
-      })
+      .then(res => res.json())
       .then(data => {
-        setAvailableBlocks(data.blocks);
+        setAvailableBlocks(data);
         setLoadingBlocks(false);
       })
       .catch(err => {
