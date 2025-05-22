@@ -42,6 +42,9 @@ def propagate_shapes(input_shape, nodes, edges):
         if not preds:
             node_input_shape = input_shape
         else:
+            print(f"node: {node}")
+            print(f"preds: {preds}")
+            print(f"node_shapes: {node_shapes}")
             pred_shapes = [node_shapes[p]['output_shape'] for p in preds if 'output_shape' in node_shapes[p]]
             if not pred_shapes or not all(s == pred_shapes[0] for s in pred_shapes):
                 node_shapes[nid] = {'input_shape': None, 'output_shape': None, 'error': 'Input shape mismatch from predecessors'}
@@ -53,11 +56,11 @@ def propagate_shapes(input_shape, nodes, edges):
             node_shapes[nid] = {'input_shape': node_input_shape, 'output_shape': output_shape, 'error': None}
             continue
         try:
+            params = node.get('parameters') or node.get('data', {}).get('parameters', {})
             dummy = torch.randn(1, *node_input_shape) if isinstance(node_input_shape, (tuple, list)) else torch.randn(1, node_input_shape)
             if node['type'] == 'linear':
                 if dummy.ndim > 2:
                     dummy = dummy.view(dummy.size(0), -1)
-                params = node.get('parameters') or node.get('data', {}).get('parameters', {})
                 in_features = int(params['in_features'])
                 out_features = int(params['out_features'])
                 if dummy.size(1) != in_features:

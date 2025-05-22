@@ -3,17 +3,27 @@
 An interactive web-based GUI for building and testing deep learning models. This tool allows users to:
 
 - Import and use pre-defined neural network / operations blocks (Transformers, Encoders/Decoders, Conv layers, etc.)
-- Build custom models through an intuitive drag-and-drop interface
-- Test models with small datasets for quick validation
+- Build and implement custom models through an intuitive drag-and-drop interface
 - Train models for a few epochs to verify functionality
+- Test models with small datasets for quick validation
+- Display metric results and save models in desired format
+
 
 ## Features
 
 - Interactive model building interface
-- Pre-defined neural network components
-- Quick model testing capabilities
-- Support for custom datasets
-- Real-time model validation
+- Pre-defined neural network layers / componenets
+- Intermediate layers compatibility checks
+
+- Coming Features:
+    - Quick model testing capabilities
+        - Short loop training
+        - custom / pre-loaded dataset
+    - Real-time model validation 
+        - Metrics of choice
+        - Custom loss function
+    - Load and modify models
+    - Export models in desired format
 
 ## Setup
 
@@ -39,23 +49,6 @@ Frontend:
 ```bash
 cd frontend
 npm run dev
-```
-
-## Project Structure
-
-```
-dnn-modeler/
-├── backend/           # FastAPI backend
-<!-- │   ├── models/       # Neural network components -->
-│   ├── main.py          # API endpoints
-│   └── utils.py      # Utility functions
-├── frontend/         # React frontend
-│   ├── src/
-│   │   ├── components/
-│   │   ├── App.tsx
-<!-- │   │   └── pages/ -->
-│   └── public/
-└── tests/            # Test files
 ```
 
 ## License

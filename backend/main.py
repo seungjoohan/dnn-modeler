@@ -188,6 +188,8 @@ async def propagate_shapes_api(payload: dict = Body(...)):
 
 @app.post("/check-compatibility")
 async def check_compatibility(payload: dict = Body(...)):
+    from datetime import datetime
+    print(f"check_compatibility called at {datetime.now()}")
     nodes = payload.get("nodes", [])
     edges = payload.get("edges", [])
     input_shape = None
